@@ -1,150 +1,155 @@
+import streamlit as st
 import pandas as pd
 import yfinance as yf
 import time
 from ta.momentum import RSIIndicator
 
-# ==============================
-# 📥 LOAD NSE STOCK LIST (NIFTY 200)
-# ==============================
+st.set_page_config(page_title="NSE Screener", layout="wide")
 
-nse_url = "https://archives.nseindia.com/content/indices/ind_nifty200list.csv"
+st.title("📊 NIFTY 200 Smart Stock Screener")
 
-print("📥 Downloading NIFTY 200 stock list...")
-df = pd.read_csv(nse_url)
+# -----------------------------
+# LOAD NSE STOCK LIST
+# -----------------------------
+@st.cache_data
+def load_nifty200():
+    url = "https://archives.nseindia.com/content/indices/ind_nifty200list.csv"
+    df = pd.read_csv(url)
+    tickers = df["Symbol"].tolist()
+    tickers = [t.strip().upper() + ".NS" for t in tickers]
+    return tickers
 
-tickers = df['Symbol'].tolist()
-tickers = [t.strip().upper() + ".NS" for t in tickers]
+tickers = load_nifty200()
 
-print(f"🔍 Total stocks loaded: {len(tickers)}")
+st.write(f"Total Stocks: {len(tickers)}")
 
-# ==============================
-# 📊 ANALYSIS
-# ==============================
+# -----------------------------
+# MAIN BUTTON
+# -----------------------------
+if st.button("🚀 Run Scanner"):
 
-results = []
+    results = []
+    progress = st.progress(0)
 
-for i, ticker in enumerate(tickers):
-    try:
-        print(f"[{i+1}/{len(tickers)}] Checking {ticker}")
+    with st.spinner("Scanning stocks... please wait ⏳"):
 
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="6mo")
+        for i, ticker in enumerate(tickers):
 
-        if hist.empty or len(hist) < 50:
-            continue
+            try:
+                data = yf.Ticker(ticker).history(period="6mo")
 
-        close = hist['Close']
-        volume = hist['Volume']
+                if data.empty or len(data) < 50:
+                    continue
 
-        # RSI
-        rsi = RSIIndicator(close).rsi().iloc[-1]
+                close = data["Close"]
+                volume = data["Volume"]
 
-        # Moving averages
-        ma50 = close.rolling(50).mean().iloc[-1]
-        ma200 = close.rolling(200).mean().iloc[-1] if len(close) > 200 else None
+                # RSI
+                rsi = RSIIndicator(close).rsi().iloc[-1]
 
-        price = close.iloc[-1]
+                # Moving averages
+                ma50 = close.rolling(50).mean().iloc[-1]
+                ma200 = close.rolling(200).mean().iloc[-1] if len(close) > 200 else None
 
-        # Volume breakout
-        avg_vol = volume.tail(20).mean()
-        vol_today = volume.iloc[-1]
-        vol_ratio = vol_today / avg_vol if avg_vol != 0 else 0
+                price = close.iloc[-1]
 
-        # ==============================
-        # 📈 SMART SIGNAL LOGIC (UPGRADED)
-        # ==============================
+                # Volume breakout
+                avg_vol = volume.tail(20).mean()
+                vol_today = volume.iloc[-1]
+                vol_ratio = vol_today / avg_vol if avg_vol != 0 else 0
 
-        score = 0
+                # -----------------------------
+                # SCORE
+                # -----------------------------
+                score = 0
 
-        # RSI condition
-        if 30 <= rsi <= 45:
-            score += 1
+                if 30 <= rsi <= 45:
+                    score += 1
 
-        # Trend condition
-        if price > ma50:
-            score += 1
+                if price > ma50:
+                    score += 1
 
-        # Volume breakout
-        if vol_ratio > 1.5:
-            score += 1
+                if vol_ratio > 1.5:
+                    score += 1
 
-        # Strong trend bonus
-        if ma200 and price > ma200:
-            score += 1
+                if ma200 and price > ma200:
+                    score += 1
 
-        # ------------------------------
-        # 🧠 STABILIZATION DETECTION
-        # ------------------------------
-        recent_closes = close.tail(5)
-        price_range = recent_closes.max() - recent_closes.min()
-        avg_price = recent_closes.mean()
+                # -----------------------------
+                # STABILIZATION
+                # -----------------------------
+                recent = close.tail(5)
+                price_range = recent.max() - recent.min()
+                avg_price = recent.mean()
 
-        stabilized = False
-        if avg_price > 0:
-            if (price_range / avg_price) < 0.01:
-                stabilized = True
+                stabilized = False
+                if avg_price > 0 and (price_range / avg_price) < 0.01:
+                    stabilized = True
 
-        # ------------------------------
-        # 🎯 FINAL SIGNAL
-        # ------------------------------
-        if score >= 3 and stabilized and rsi >= 30:
-            signal = "🟢 BUY"
+                # -----------------------------
+                # SIGNAL
+                # -----------------------------
+                if score >= 3 and stabilized and rsi >= 30:
+                    signal = "🟢 BUY"
 
-        elif rsi < 30:
-            signal = "🟡 WATCH"
+                elif rsi < 30:
+                    signal = "🟡 WATCH"
 
-        elif rsi > 60:
-            signal = "🔴 AVOID"
+                elif rsi > 60:
+                    signal = "🔴 AVOID"
 
-        else:
-            signal = "HOLD"
+                else:
+                    signal = "HOLD"
 
-        # Save result
-        results.append({
-            "Ticker": ticker,
-            "Price": round(price, 2),
-            "RSI": round(rsi, 2),
-            "MA50": round(ma50, 2),
-            "Volume Ratio": round(vol_ratio, 2),
-            "Score": score,
-            "Signal": signal
-        })
+                results.append({
+                    "Ticker": ticker,
+                    "Price": round(price, 2),
+                    "RSI": round(rsi, 2),
+                    "MA50": round(ma50, 2),
+                    "Volume Ratio": round(vol_ratio, 2),
+                    "Score": score,
+                    "Signal": signal
+                })
 
-        time.sleep(0.2)  # prevent API throttling
+                time.sleep(0.1)  # avoid API block
 
-    except Exception as e:
-        print(f"❌ Error: {ticker}")
+            except:
+                continue
 
-# ==============================
-# 📄 SAVE RESULTS
-# ==============================
+            progress.progress((i + 1) / len(tickers))
 
-result_df = pd.DataFrame(results)
+    # -----------------------------
+    # RESULTS
+    # -----------------------------
+    if len(results) == 0:
+        st.error("No data fetched ❌")
+    else:
+        df = pd.DataFrame(results)
 
-# Sort best first
-result_df = result_df.sort_values(by=["Signal", "Score"], ascending=[True, False])
+        # Sort: BUY first
+        df = df.sort_values(by=["Signal", "Score"], ascending=[True, False])
 
-# Filters
-buy_df = result_df[result_df["Signal"] == "🟢 BUY"]
-watch_df = result_df[result_df["Signal"] == "🟡 WATCH"]
+        st.success("✅ Scan Complete!")
 
-# Save to Excel
-output_file = "nse_stock_screener.xlsx"
+        # FULL TABLE
+        st.subheader("📊 All Stocks")
+        st.dataframe(df, use_container_width=True)
 
-with pd.ExcelWriter(output_file) as writer:
-    result_df.to_excel(writer, sheet_name="All Stocks", index=False)
-    buy_df.to_excel(writer, sheet_name="BUY Signals", index=False)
-    watch_df.to_excel(writer, sheet_name="WATCH List", index=False)
+        # BUY
+        st.subheader("🟢 BUY Signals")
+        buy_df = df[df["Signal"] == "🟢 BUY"]
+        st.dataframe(buy_df, use_container_width=True)
 
-print("\n✅ Done!")
-print(f"📊 Results saved to {output_file}")
+        # WATCH
+        st.subheader("🟡 WATCH List")
+        watch_df = df[df["Signal"] == "🟡 WATCH"]
+        st.dataframe(watch_df, use_container_width=True)
 
-# ==============================
-# 📌 SUMMARY
-# ==============================
-
-print("\n📈 Signal Summary:")
-print(result_df["Signal"].value_counts())
-
-print("\n🔥 Top 10 Stocks:")
-print(result_df.head(10)[["Ticker", "Price", "RSI", "Volume Ratio", "Score", "Signal"]])
+        # DOWNLOAD
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Results",
+            data=csv,
+            file_name="nifty200_screener.csv",
+            mime="text/csv"
+        )
